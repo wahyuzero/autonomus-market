@@ -70,8 +70,9 @@ export function startDashboard(): void {
   orchestratorEmitter.on('circuit-breaker', (data) => broadcast('circuit-breaker', data));
   orchestratorEmitter.on('tp-event', (data) => broadcast('tp-event', data));
 
-  server.listen(CONFIG.DASHBOARD.PORT, () => {
-    console.log(`\n[Dashboard] 🌐 Running at http://localhost:${CONFIG.DASHBOARD.PORT}`);
+  const host = '0.0.0.0';
+  server.listen(CONFIG.DASHBOARD.PORT, host, () => {
+    console.log(`\n[Dashboard] Running at http://${host}:${CONFIG.DASHBOARD.PORT}`);
     console.log(`[Dashboard] Press Ctrl+C to stop\n`);
   });
 }
