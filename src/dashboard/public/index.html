@@ -212,7 +212,8 @@ const MAX_LOGS = 100;
 let lastState = null;
 
 function connectWS() {
-  ws = new WebSocket(`ws://${location.host}`);
+  const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${wsProto}://${location.host}`);
 
   ws.onopen = () => {
     const el = document.getElementById('ws-status');
