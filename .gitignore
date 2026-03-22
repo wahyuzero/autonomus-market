@@ -6,8 +6,8 @@ node_modules/
 .env.local
 .env.production
 
-# Data / runtime
-data/
+# Runtime data (top-level only, NOT src/data/)
+/data
 *.log
 
 # Build
