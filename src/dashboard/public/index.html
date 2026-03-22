@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autonomous Market AI — Live Dashboard</title>
+<meta name="description" content="Real-time autonomous crypto, forex, and commodity AI trading dashboard.">
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+      colors: {
+        brand: { 50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8' },
+        surface: { 900:'#060b18',800:'#0d1627',700:'#111e35',600:'#162340' },
+      },
+      animation: {
+        'pulse-slow': 'pulse 3s cubic-bezier(0.4,0,0.6,1) infinite',
+        'spin-slow': 'spin 2s linear infinite',
+      }
+    }
+  }
+}
+</script>
+<style>
+  body { background: #060b18; }
+  body::before {
+    content:''; position:fixed; inset:0; z-index:0; pointer-events:none;
+    background-image:
+      linear-gradient(rgba(59,130,246,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(59,130,246,0.03) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+  .glow-orb { position:fixed; border-radius:50%; filter:blur(100px); pointer-events:none; z-index:0; opacity:.12; }
+  .glow-1 { width:500px; height:500px; background:#3b82f6; top:-200px; left:-100px; }
+  .glow-2 { width:400px; height:400px; background:#8b5cf6; bottom:-150px; right:-100px; }
+
+  .glass { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); backdrop-filter: blur(12px); }
+  .glass-hover:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.12); }
+
+  @keyframes analyzing { 0%,100%{border-color:rgba(59,130,246,0.15)} 50%{border-color:rgba(59,130,246,0.5)} }
+  .card-analyzing { animation: analyzing 1.5s ease-in-out infinite; }
+
+  .signal-BUY { border-left-color: #10b981 !important; }
+  .signal-SELL { border-left-color: #ef4444 !important; }
+  .signal-HOLD { border-left-color: #f59e0b !important; }
+
+  .scrollbar-thin::-webkit-scrollbar { width: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 999px; }
+
+  .log-entry { border-left: 3px solid transparent; }
+  .log-entry.success { border-left-color: #10b981; }
+  .log-entry.danger { border-left-color: #ef4444; }
+  .log-entry.warning { border-left-color: #f59e0b; }
+  .log-entry.correction { border-left-color: #a78bfa; }
+  .log-entry.info { border-left-color: #3b82f6; }
+</style>
+</head>
+<body class="font-sans text-slate-200 min-h-screen overflow-x-hidden">
+
+<div class="glow-orb glow-1"></div>
+<div class="glow-orb glow-2"></div>
+
+<div id="app" class="relative z-10">
+
+<!-- ========== HEADER ========== -->
+<header class="flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-8 py-4 gap-3">
+  <div class="flex items-center gap-3">
+    <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-blue-500/20">
+      <i class="fa-solid fa-robot text-lg"></i>
+    </div>
+    <div>
+      <h1 class="text-lg md:text-xl font-bold tracking-tight">Autonomous Market AI</h1>
+      <p class="text-xs text-slate-500">Crypto &bull; Forex &bull; Commodities</p>
+    </div>
+  </div>
+
+  <div class="flex items-center gap-3 flex-wrap">
+    <div id="ws-status" class="glass flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium text-emerald-400 border border-emerald-500/30">
+      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-slow"></span> Connecting
+    </div>
+    <div class="glass flex items-center gap-4 px-4 py-1.5 rounded-full text-xs text-slate-400">
+      <span><i class="fa-solid fa-repeat mr-1 text-blue-400"></i> Cycle <b class="text-slate-200" id="h-cycle">—</b></span>
+      <span><i class="fa-solid fa-brain mr-1 text-purple-400"></i> <b class="text-slate-200" id="h-aicalls">0</b></span>
+      <span><i class="fa-solid fa-chart-pie mr-1 text-amber-400"></i> <b class="text-slate-200" id="h-pairs">0</b> pairs</span>
+    </div>
+  </div>
+</header>
+
+<!-- ========== SUMMARY STRIP ========== -->
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-px mx-4 md:mx-8 mb-3 rounded-xl overflow-hidden glass">
+  <div class="bg-surface-800/80 p-3 md:p-4">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1"><i class="fa-solid fa-vault mr-1"></i> Total Equity</div>
+    <div class="text-base md:text-lg font-bold text-blue-400" id="s-equity">$0</div>
+    <div class="text-[10px] text-slate-600 mt-0.5" id="s-equity-change">Starting: —</div>
+  </div>
+  <div class="bg-surface-800/80 p-3 md:p-4">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1"><i class="fa-solid fa-sack-dollar mr-1"></i> Total P&L</div>
+    <div class="text-base md:text-lg font-bold text-emerald-400" id="s-pnl">$0</div>
+    <div class="text-[10px] mt-0.5" id="s-pnl-pct" style="color:#64748b">0%</div>
+  </div>
+  <div class="bg-surface-800/80 p-3 md:p-4">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1"><i class="fa-solid fa-trophy mr-1"></i> Win Rate</div>
+    <div class="text-base md:text-lg font-bold text-emerald-400" id="s-winrate">0%</div>
+    <div class="text-[10px] text-slate-600 mt-0.5" id="s-trades">0 trades</div>
+  </div>
+  <div class="bg-surface-800/80 p-3 md:p-4">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1"><i class="fa-solid fa-layer-group mr-1"></i> Active Pairs</div>
+    <div class="text-base md:text-lg font-bold text-purple-400" id="s-activepairs">0</div>
+    <div class="text-[10px] text-slate-600 mt-0.5">monitoring</div>
+  </div>
+  <div class="bg-surface-800/80 p-3 md:p-4">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1"><i class="fa-solid fa-fire-flame-curved mr-1"></i> Portfolio Heat</div>
+    <div class="text-base md:text-lg font-bold" id="s-heat">0%</div>
+    <div class="text-[10px] text-slate-600 mt-0.5">open risk</div>
+  </div>
+  <div class="bg-surface-800/80 p-3 md:p-4">
+    <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1"><i class="fa-solid fa-clock mr-1"></i> Last Update</div>
+    <div class="text-base md:text-lg font-bold text-slate-300" id="s-time">—</div>
+    <div class="text-[10px] text-slate-600 mt-0.5">local time</div>
+  </div>
+</div>
+
+<!-- ========== ANALYTICS STRIP ========== -->
+<div class="flex gap-2 mx-4 md:mx-8 mb-3 overflow-x-auto scrollbar-thin pb-1">
+  <div class="glass rounded-lg px-3 py-2 min-w-[110px] flex-shrink-0 text-center">
+    <div class="text-[9px] uppercase tracking-wider text-slate-500">Sharpe</div>
+    <div class="text-sm font-bold text-blue-400 mt-0.5" id="a-sharpe">&mdash;</div>
+    <div class="text-[8px] text-slate-600">&gt;1.5 = good</div>
+  </div>
+  <div class="glass rounded-lg px-3 py-2 min-w-[110px] flex-shrink-0 text-center">
+    <div class="text-[9px] uppercase tracking-wider text-slate-500">Sortino</div>
+    <div class="text-sm font-bold text-emerald-400 mt-0.5" id="a-sortino">&mdash;</div>
+    <div class="text-[8px] text-slate-600">&gt;2.0 = good</div>
+  </div>
+  <div class="glass rounded-lg px-3 py-2 min-w-[110px] flex-shrink-0 text-center">
+    <div class="text-[9px] uppercase tracking-wider text-slate-500">Max DD</div>
+    <div class="text-sm font-bold text-red-400 mt-0.5" id="a-mdd">&mdash;</div>
+    <div class="text-[8px] text-slate-600">&lt;15% target</div>
+  </div>
+  <div class="glass rounded-lg px-3 py-2 min-w-[110px] flex-shrink-0 text-center">
+    <div class="text-[9px] uppercase tracking-wider text-slate-500">Profit Factor</div>
+    <div class="text-sm font-bold text-amber-400 mt-0.5" id="a-pf">&mdash;</div>
+    <div class="text-[8px] text-slate-600">&gt;1.5 edge</div>
+  </div>
+  <div class="glass rounded-lg px-3 py-2 min-w-[110px] flex-shrink-0 text-center">
+    <div class="text-[9px] uppercase tracking-wider text-slate-500">Expectancy</div>
+    <div class="text-sm font-bold text-slate-300 mt-0.5" id="a-exp">&mdash;</div>
+    <div class="text-[8px] text-slate-600">$ per trade</div>
+  </div>
+  <div class="glass rounded-lg px-3 py-2 min-w-[110px] flex-shrink-0 text-center">
+    <div class="text-[9px] uppercase tracking-wider text-slate-500">Avg R</div>
+    <div class="text-sm font-bold text-purple-400 mt-0.5" id="a-avgr">&mdash;</div>
+    <div class="text-[8px] text-slate-600">&gt;1.0 target</div>
+  </div>
+  <div class="glass rounded-lg px-3 py-2 min-w-[110px] flex-shrink-0 text-center">
+    <div class="text-[9px] uppercase tracking-wider text-slate-500">Calmar</div>
+    <div class="text-sm font-bold text-orange-400 mt-0.5" id="a-calmar">&mdash;</div>
+    <div class="text-[8px] text-slate-600">&gt;3.0 = great</div>
+  </div>
+</div>
+
+<!-- ========== SESSION BANNER ========== -->
+<div id="session-banner" class="glass mx-4 md:mx-8 mb-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 py-2.5 gap-2 transition-all duration-300">
+  <div class="flex items-center gap-2">
+    <i class="fa-solid fa-globe text-blue-400"></i>
+    <span class="text-sm font-medium" id="session-name">Loading market session...</span>
+    <span class="text-xs text-slate-500" id="session-desc"></span>
+  </div>
+  <div id="heat-pill" class="flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+    <i class="fa-solid fa-fire-flame-curved"></i> Heat: <span id="heat-val">0</span>%
+  </div>
+</div>
+
+<!-- ========== MAIN LAYOUT ========== -->
+<div class="flex flex-col lg:flex-row gap-4 px-4 md:px-8 pb-8">
+  <!-- Pairs Grid -->
+  <div class="flex-1 min-w-0">
+    <div id="pairs-grid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+      <div class="glass rounded-xl p-8 text-center text-slate-500 col-span-full">
+        <i class="fa-solid fa-satellite-dish text-3xl mb-3 block text-slate-600"></i>
+        Connecting to AI system...
+      </div>
+    </div>
+  </div>
+
+  <!-- Activity Log -->
+  <div class="w-full lg:w-80 xl:w-96 flex-shrink-0">
+    <div class="glass rounded-xl overflow-hidden sticky top-4">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-white/5">
+        <span class="text-sm font-semibold"><i class="fa-solid fa-tower-broadcast text-blue-400 mr-2"></i>Live Activity</span>
+        <span class="text-[10px] text-slate-500" id="log-count">0 events</span>
+      </div>
+      <div id="log-container" class="max-h-[calc(100vh-200px)] overflow-y-auto scrollbar-thin p-2 space-y-1">
+        <div class="text-center text-slate-600 text-xs py-6">Waiting for events...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /#app -->
+
+<script>
+let ws = null;
+let reconnectTimeout = null;
+let logEntries = [];
+const MAX_LOGS = 100;
+let lastState = null;
+
+function connectWS() {
+  ws = new WebSocket(`ws://${location.host}`);
+
+  ws.onopen = () => {
+    const el = document.getElementById('ws-status');
+    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse-slow"></span> Live';
+    el.className = 'glass flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium text-emerald-400 border border-emerald-500/30';
+  };
+
+  ws.onclose = () => {
+    const el = document.getElementById('ws-status');
+    el.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-400 animate-pulse-slow"></span> Reconnecting';
+    el.className = 'glass flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium text-red-400 border border-red-500/30';
+    reconnectTimeout = setTimeout(connectWS, 3000);
+  };
+
+  ws.onmessage = (e) => { try { handleMessage(JSON.parse(e.data)); } catch {} };
+}
+
+function handleMessage(msg) {
+  switch(msg.type) {
+    case 'state': updateState(msg.data); break;
+    case 'trade-opened': {
+      const t = msg.data.trade;
+      addLog('success', msg.data.pair,
+        `<i class="fa-solid fa-cart-shopping"></i> BUY L${t.pyramidLayer||1} @ $${t.entryPrice?.toFixed(4)} | TP1:$${t.tp1?.toFixed(4)} SL:$${t.stopLoss?.toFixed(4)}`);
+      break;
+    }
+    case 'trade-closed': {
+      const t = msg.data.trade;
+      const good = (t.pnl ?? 0) >= 0;
+      addLog(good ? 'success' : 'danger', msg.data.pair,
+        `<i class="fa-solid fa-${good?'circle-check':'circle-xmark'}"></i> ${t.reason} @ $${t.closePrice?.toFixed(4)} | PnL: ${good?'+':''}$${(t.pnl||0).toFixed(2)}`);
+      break;
+    }
+    case 'tp-event': {
+      const icons = {
+        'breakeven_activated': '<i class="fa-solid fa-lock"></i> BREAKEVEN',
+        'tp1_hit': '<i class="fa-solid fa-bullseye"></i> TP1 HIT',
+        'tp2_hit': '<i class="fa-solid fa-bullseye"></i> TP2 HIT',
+        'tp3_swing_activated': '<i class="fa-solid fa-sailboat"></i> TP3 SWING',
+        'sl_hit': '<i class="fa-solid fa-shield-halved"></i> Stop Loss',
+        'breakeven_sl': '<i class="fa-solid fa-lock"></i> Breakeven SL',
+        'swing_sl_hit': '<i class="fa-solid fa-sailboat"></i> Swing SL',
+        'time_exit': '<i class="fa-solid fa-clock"></i> Time Exit',
+        'post_tp1_sl': '<i class="fa-solid fa-lock"></i> Locked TP1',
+        'post_tp2_sl': '<i class="fa-solid fa-lock"></i> Locked TP2',
+      };
+      const label = icons[msg.data.event] || msg.data.event;
+      const type = msg.data.event.includes('sl') || msg.data.event.includes('exit') ? 'warning' : msg.data.event.includes('swing') ? 'correction' : 'success';
+      addLog(type, msg.data.pair, `${label} @ $${msg.data.price?.toFixed(4)}${msg.data.pnl !== undefined ? ` | PnL: $${msg.data.pnl.toFixed(2)}` : ''}`);
+      break;
+    }
+    case 'circuit-breaker':
+      addLog('danger', msg.data.pair, `<i class="fa-solid fa-triangle-exclamation"></i> CIRCUIT BREAKER: ${msg.data.reason}`);
+      break;
+    case 'self-corrected':
+      addLog('correction', msg.data.pair, `<i class="fa-solid fa-rotate"></i> Self-corrected: ${msg.data.message?.slice(0,100)}`);
+      break;
+    case 'pair-analyzed':
+      addLog('info', msg.data.pair, `${signalIcon(msg.data.analysis?.signal)} ${msg.data.analysis?.signal} (${msg.data.analysis?.confidence}%) | Score: ${msg.data.technical?.score}`);
+      updateSessionAndHeat(msg.data);
+      break;
+    case 'cycle':
+      addLog('info', 'SYSTEM', `<i class="fa-solid fa-chart-bar"></i> Cycle #${msg.data.cycle} | AI calls: ${msg.data.totalAICalls}`);
+      break;
+  }
+}
+
+function signalIcon(s) {
+  if (s === 'BUY') return '<i class="fa-solid fa-circle-up text-emerald-400"></i>';
+  if (s === 'SELL') return '<i class="fa-solid fa-circle-down text-red-400"></i>';
+  return '<i class="fa-solid fa-circle-minus text-amber-400"></i>';
+}
+
+function updateSessionAndHeat(data) {
+  const session = data.session;
+  if (session) {
+    const banner = document.getElementById('session-banner');
+    document.getElementById('session-name').textContent = session.sessionName || 'Unknown session';
+    document.getElementById('session-desc').textContent = session.description || '';
+    // Quality colors
+    const q = session.quality || 'low';
+    banner.className = `glass mx-4 md:mx-8 mb-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 py-2.5 gap-2 transition-all duration-300 ${
+      q === 'high' ? 'border-emerald-500/30' : q === 'medium' ? 'border-amber-500/30' : 'border-slate-700/50'
+    }`;
+  }
+  const heat = data.portfolioHeat ?? 0;
+  const heatValEl = document.getElementById('heat-val');
+  const heatPill = document.getElementById('heat-pill');
+  if (heatValEl) heatValEl.textContent = heat.toFixed(1);
+  if (heatPill) {
+    const cls = heat > 10 ? 'bg-red-500/10 text-red-400 border-red-500/20' : heat > 6 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+    heatPill.className = `flex items-center gap-1.5 text-xs font-semibold px-3 py-1 rounded-full border ${cls}`;
+  }
+}
+
+function updateState(data) {
+  lastState = data;
+  const { pairs, summary, timestamp } = data;
+
+  document.getElementById('h-cycle').textContent = summary.cycle ?? '\u2014';
+  document.getElementById('h-aicalls').textContent = (summary.totalAICalls ?? 0).toLocaleString();
+  document.getElementById('h-pairs').textContent = summary.activePairs ?? 0;
+
+  const startingTotal = summary.activePairs * 1000;
+  const equity = summary.totalEquity ?? startingTotal;
+  const pnl = summary.totalPnl ?? 0;
+  document.getElementById('s-equity').textContent = `$${equity.toLocaleString('en', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+  document.getElementById('s-equity-change').textContent = `Starting: $${startingTotal.toLocaleString()}`;
+
+  const pnlEl = document.getElementById('s-pnl');
+  pnlEl.textContent = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+  pnlEl.className = `text-base md:text-lg font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+
+  const pnlPct = summary.totalPnlPct ?? 0;
+  const pnlPctEl = document.getElementById('s-pnl-pct');
+  pnlPctEl.textContent = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+  pnlPctEl.className = `text-[10px] mt-0.5 ${pnlPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`;
+
+  document.getElementById('s-winrate').textContent = `${(summary.winRate ?? 0).toFixed(1)}%`;
+  document.getElementById('s-trades').textContent = `${summary.totalTrades ?? 0} trades`;
+  document.getElementById('s-activepairs').textContent = summary.activePairs ?? 0;
+  document.getElementById('s-time').textContent = new Date(timestamp).toLocaleTimeString();
+
+  // Heat in summary
+  const heat = summary.analytics?.tradingHalted ? 'HALTED' : '—';
+  // Portfolio heat from pair-analyzed is more accurate; but summary.analytics is available
+  const heatEl = document.getElementById('s-heat');
+  if (heatEl && summary.analytics) {
+    heatEl.textContent = summary.analytics.tradingHalted ? 'HALTED' : `${(summary.analytics.maxDrawdownPct ?? 0).toFixed(1)}%`;
+    heatEl.className = `text-base md:text-lg font-bold ${summary.analytics.maxDrawdownPct > 10 ? 'text-red-400' : summary.analytics.maxDrawdownPct > 5 ? 'text-amber-400' : 'text-emerald-400'}`;
+  }
+
+  // Analytics strip
+  const a = summary.analytics;
+  if (a) {
+    const fmt = (v, dec=2) => v != null && isFinite(v) && Math.abs(v) < 999 ? v.toFixed(dec) : '\u2014';
+    document.getElementById('a-sharpe').textContent = fmt(a.sharpeRatio);
+    document.getElementById('a-sortino').textContent = fmt(a.sortinoRatio);
+    document.getElementById('a-mdd').textContent = a.maxDrawdownPct > 0 ? `-${fmt(a.maxDrawdownPct,1)}%` : '0%';
+    document.getElementById('a-pf').textContent = fmt(a.profitFactor);
+    const expEl = document.getElementById('a-exp');
+    expEl.textContent = a.expectancy != null ? `${a.expectancy >= 0 ? '+' : ''}$${fmt(a.expectancy)}` : '\u2014';
+    expEl.className = `text-sm font-bold mt-0.5 ${(a.expectancy ?? 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`;
+    document.getElementById('a-avgr').textContent = fmt(a.avgR);
+    document.getElementById('a-calmar').textContent = fmt(a.calmarRatio);
+  }
+
+  renderPairs(pairs ?? []);
+}
+
+function renderPairs(pairs) {
+  const grid = document.getElementById('pairs-grid');
+  if (!pairs.length) {
+    grid.innerHTML = '<div class="glass rounded-xl p-8 text-center text-slate-500 col-span-full"><i class="fa-solid fa-satellite-dish text-3xl mb-3 block text-slate-600"></i>Waiting for market data...</div>';
+    return;
+  }
+  pairs.sort((a, b) => b.totalPnlPct - a.totalPnlPct);
+  grid.innerHTML = pairs.map(p => pairCard(p)).join('');
+}
+
+const PHASE_LABELS = {
+  'initial':   ['text-slate-500', 'fa-hourglass-half', 'Initial'],
+  'breakeven': ['text-blue-400', 'fa-lock', 'Breakeven'],
+  'tp1_hit':   ['text-emerald-400', 'fa-bullseye', 'TP1 Done'],
+  'tp2_hit':   ['text-emerald-300', 'fa-bullseye', 'TP2 Done'],
+  'swing':     ['text-purple-400', 'fa-sailboat', 'Swing'],
+};
+
+function renderPositions(positions) {
+  if (!positions || positions.length === 0) return '';
+  return `<div class="space-y-1.5 mt-2">${positions.map(pos => {
+    const price = pos.entryPrice || 0;
+    const phase = pos.tpPhase || 'initial';
+    const [pColor, pIcon, pLabel] = PHASE_LABELS[phase] || ['text-slate-500','fa-hourglass-half', phase];
+    return `
+    <div class="bg-white/[0.02] rounded-lg px-3 py-2">
+      <div class="flex items-center justify-between text-xs mb-1">
+        <span class="text-slate-400">Entry: <b class="text-slate-200">$${price.toFixed(4)}</b></span>
+        <span class="${pColor} font-medium"><i class="fa-solid ${pIcon} mr-1"></i>${pLabel}</span>
+      </div>
+      <div class="flex gap-1.5 flex-wrap">
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 ${pos.tp1 && price >= pos.tp1 ? 'ring-1 ring-emerald-400/50':''}" >TP1 $${(pos.tp1||0).toFixed(4)}</span>
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 ${pos.tp2 && price >= pos.tp2 ? 'ring-1 ring-emerald-400/50':''}">TP2 $${(pos.tp2||0).toFixed(4)}</span>
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 ${pos.tp3 && price >= pos.tp3 ? 'ring-1 ring-emerald-400/50':''}">TP3 $${(pos.tp3||0).toFixed(4)}</span>
+        <span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-400">SL $${(pos.stopLoss||0).toFixed(4)}</span>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function pairCard(p) {
+  const pnlColor = p.totalPnlPct >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const upnlColor = p.unrealizedPnl >= 0 ? 'text-emerald-400' : 'text-red-400';
+  const techScore = p.technicalScore ?? 0;
+  const techPct = ((techScore + 100) / 2);
+  const techColor = techScore > 20 ? 'bg-emerald-500' : techScore < -20 ? 'bg-red-500' : 'bg-amber-500';
+  const hasSwing = p.positions?.some(pos => pos.tpPhase === 'swing');
+
+  return `
+<div class="glass rounded-xl overflow-hidden border-l-2 signal-${p.signal} ${p.isAnalyzing ? 'card-analyzing' : ''} glass-hover transition-all duration-200">
+  ${p.correctionCount > 0 ? `<div class="bg-purple-500/10 text-purple-400 text-[10px] font-medium px-3 py-1 flex items-center gap-1"><i class="fa-solid fa-rotate"></i> ${p.correctionCount} corrections</div>` : ''}
+
+  <div class="p-3 md:p-4">
+    <!-- Header -->
+    <div class="flex items-start justify-between mb-3">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-bold">${formatPair(p.pair)}</span>
+          ${hasSwing ? '<span class="text-[10px] text-purple-400"><i class="fa-solid fa-sailboat"></i></span>' : ''}
+        </div>
+        <span class="inline-flex items-center gap-1 text-[10px] font-semibold mt-1 px-2 py-0.5 rounded-full ${
+          p.signal === 'BUY' ? 'bg-emerald-500/10 text-emerald-400' :
+          p.signal === 'SELL' ? 'bg-red-500/10 text-red-400' :
+          'bg-amber-500/10 text-amber-400'
+        }">
+          <i class="fa-solid fa-${p.signal === 'BUY' ? 'circle-up' : p.signal === 'SELL' ? 'circle-down' : 'circle-minus'}"></i> ${p.signal}
+        </span>
+      </div>
+      <div class="text-right">
+        <div class="text-sm font-mono font-bold">$${formatPrice(p.price)}</div>
+        <div class="text-xs ${pnlColor}">P&L: ${p.totalPnlPct >= 0 ? '+' : ''}${(p.totalPnlPct || 0).toFixed(2)}%</div>
+      </div>
+    </div>
+
+    <!-- Positions -->
+    ${renderPositions(p.positions)}
+
+    <!-- Metrics Grid -->
+    <div class="grid grid-cols-3 gap-2 mt-3 text-center">
+      <div class="bg-white/[0.02] rounded-lg py-1.5 px-1">
+        <div class="text-[9px] text-slate-500">Equity</div>
+        <div class="text-xs font-bold text-blue-400">$${(p.equity || 0).toFixed(0)}</div>
+      </div>
+      <div class="bg-white/[0.02] rounded-lg py-1.5 px-1">
+        <div class="text-[9px] text-slate-500">Realized</div>
+        <div class="text-xs font-bold ${pnlColor}">${p.totalPnl >= 0 ? '+' : ''}$${(p.totalPnl || 0).toFixed(2)}</div>
+      </div>
+      <div class="bg-white/[0.02] rounded-lg py-1.5 px-1">
+        <div class="text-[9px] text-slate-500">Win Rate</div>
+        <div class="text-xs font-bold text-emerald-400">${(p.winRate || 0).toFixed(0)}%</div>
+      </div>
+      <div class="bg-white/[0.02] rounded-lg py-1.5 px-1">
+        <div class="text-[9px] text-slate-500">Unrealized</div>
+        <div class="text-xs font-bold ${upnlColor}">${p.unrealizedPnl >= 0 ? '+' : ''}$${(p.unrealizedPnl || 0).toFixed(2)}</div>
+      </div>
+      <div class="bg-white/[0.02] rounded-lg py-1.5 px-1">
+        <div class="text-[9px] text-slate-500">Closed</div>
+        <div class="text-xs font-bold text-slate-300">${p.closedTrades || 0}</div>
+      </div>
+      <div class="bg-white/[0.02] rounded-lg py-1.5 px-1">
+        <div class="text-[9px] text-slate-500">Layers</div>
+        <div class="text-xs font-bold text-purple-400">${p.openPositions || 0}/3</div>
+      </div>
+    </div>
+
+    <!-- Confluence Bar -->
+    <div class="mt-3">
+      <div class="flex items-center justify-between text-[10px] mb-1">
+        <span class="flex items-center gap-1">
+          <span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold ${
+            p.trend === 'BULLISH' ? 'bg-emerald-500/15 text-emerald-400' :
+            p.trend === 'BEARISH' ? 'bg-red-500/15 text-red-400' :
+            'bg-amber-500/15 text-amber-400'
+          }">${p.trend || 'NEUTRAL'}</span>
+          <span class="text-slate-500">Confluence</span>
+        </span>
+        <span class="font-mono font-bold ${techScore > 20 ? 'text-emerald-400' : techScore < -20 ? 'text-red-400' : 'text-amber-400'}">${techScore > 0 ? '+' : ''}${techScore}/100</span>
+      </div>
+      <div class="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+        <div class="h-full rounded-full transition-all duration-500 ${techColor}" style="width:${Math.max(2, techPct)}%"></div>
+      </div>
+    </div>
+
+    <!-- Confidence Bar -->
+    <div class="mt-2">
+      <div class="flex items-center justify-between text-[10px] mb-1">
+        <span class="text-slate-500"><i class="fa-solid fa-brain mr-1"></i>AI Confidence</span>
+        <span class="font-mono font-bold text-slate-300">${p.confidence || 0}%</span>
+      </div>
+      <div class="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+        <div class="h-full rounded-full bg-gradient-to-r from-blue-500 to-purple-500 transition-all duration-500" style="width:${p.confidence || 0}%"></div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="flex items-center justify-between mt-3 pt-2 border-t border-white/5">
+      <span class="text-[10px] text-slate-600"><i class="fa-solid fa-gear mr-1"></i>${p.strategy || 'Default'}</span>
+      ${p.isAnalyzing
+        ? '<span class="text-[10px] text-blue-400 flex items-center gap-1"><i class="fa-solid fa-spinner fa-spin"></i> Analyzing</span>'
+        : `<span class="text-[10px] text-slate-500"><i class="fa-solid fa-chart-column mr-1"></i>${p.openPositions || 0} open${p.openPositions > 1 ? ' <i class="fa-solid fa-layer-group text-purple-400"></i>' : ''}</span>`
+      }
+    </div>
+  </div>
+</div>`;
+}
+
+function addLog(type, pair, msg) {
+  const time = new Date().toLocaleTimeString();
+  logEntries.unshift({ type, pair, msg, time });
+  if (logEntries.length > MAX_LOGS) logEntries.pop();
+  renderLogs();
+}
+
+function renderLogs() {
+  const container = document.getElementById('log-container');
+  document.getElementById('log-count').textContent = `${logEntries.length} events`;
+  container.innerHTML = logEntries.map(e => `
+    <div class="log-entry ${e.type} rounded-lg px-3 py-2 text-xs hover:bg-white/[0.03] transition-colors">
+      <span class="text-slate-600 font-mono text-[10px]">${e.time}</span>
+      <span class="font-semibold text-slate-300 ml-2">${e.pair}</span>
+      <span class="text-slate-400 ml-1">${e.msg}</span>
+    </div>
+  `).join('');
+}
+
+function formatPrice(price) {
+  if (!price) return '\u2014';
+  if (price > 1000) return price.toLocaleString('en', {minimumFractionDigits:2, maximumFractionDigits:2});
+  if (price > 1) return price.toFixed(4);
+  return price.toFixed(6);
+}
+
+function formatPair(pair) {
+  if (pair.endsWith('USDT')) return pair.replace('USDT', '/USDT');
+  if (pair.length === 6) return `${pair.slice(0,3)}/${pair.slice(3)}`;
+  return pair;
+}
+
+// Start
+connectWS();
+setInterval(() => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    fetch('/api/state').then(r => r.json()).then(data => updateState(data)).catch(() => {});
+  }
+}, 5000);
+</script>
+</body>
+</html>
