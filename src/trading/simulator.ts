@@ -1,5 +1,5 @@
 // ============================================================
-// TRADING SIMULATOR v2.0 — Multi-TP + Trailing SL + Pyramiding
+// TRADING SIMULATOR v1.0.0 — Multi-TP + Trailing SL + Pyramiding
 //
 // SYSTEM OVERVIEW:
 //

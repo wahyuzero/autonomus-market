@@ -1,5 +1,5 @@
 // ============================================================
-// CONFIG - Autonomous Market AI System v2.5
+// CONFIG - Autonomous Market AI System v1.0.0
 // Multi-TP + Trailing SL + Pyramiding + Kelly + Sessions + Correlation
 // ============================================================
 
@@ -102,7 +102,20 @@ export const CONFIG = {
 
   DASHBOARD: {
     PORT: 3000,
+    HOST: process.env.DASHBOARD_HOST || '127.0.0.1',
     WS_BROADCAST_INTERVAL_MS: 1000,
+    AUTH_TOKEN: process.env.DASHBOARD_AUTH_TOKEN || '',  // Bearer token; empty = no auth
+  },
+
+  STARTUP: {
+    READINESS_TIMEOUT_MS: Number(process.env.STARTUP_READINESS_TIMEOUT_MS || 10000),
+    READINESS_MODE: (process.env.STARTUP_READINESS_MODE || 'usable') as 'usable' | 'live',
+    READINESS_FAILURE_POLICY: (process.env.STARTUP_READINESS_FAILURE_POLICY || 'warn') as 'warn' | 'fail',
+    READINESS_REQUIREMENTS: {
+      crypto: (process.env.STARTUP_READINESS_CRYPTO || '') as SourceHealthTier | '',
+      forex: (process.env.STARTUP_READINESS_FOREX || '') as SourceHealthTier | '',
+      commodity: (process.env.STARTUP_READINESS_COMMODITY || '') as SourceHealthTier | '',
+    },
   },
 
   CRYPTO_PAIRS: [
@@ -122,6 +135,18 @@ CONFIG.ACTIVE_PAIRS = [
 ];
 
 export type MarketType = 'crypto' | 'forex' | 'stock' | 'commodity';
+
+export type SourceHealthTier = 'LIVE' | 'DEGRADED' | 'SIMULATION';
+export type StartupReadinessMode = 'usable' | 'live';
+export type StartupReadinessFailurePolicy = 'warn' | 'fail';
+
+export interface SourceStatus {
+  source: string;
+  status: SourceHealthTier;
+  message: string;
+  lastUpdated: number;
+  metadata?: Record<string, unknown>;
+}
 
 export interface Candle {
   time: number; open: number; high: number; low: number; close: number; volume: number;
@@ -299,4 +324,83 @@ export function getPairType(pair: string): MarketType {
 
 export function getModeConfig() {
   return CONFIG.MODE === 'SCALPING' ? CONFIG.TRADING.SCALPING : CONFIG.TRADING.SWING;
+}
+
+// ============================================================
+// STARTUP CONFIG VALIDATION
+// ============================================================
+
+export interface ConfigError {
+  field: string;
+  message: string;
+}
+
+export interface ConfigValidationResult {
+  valid: boolean;
+  errors: ConfigError[];
+}
+
+/**
+ * Validates required runtime configuration before the app boots.
+ * Returns a result object with all collected errors (does not throw).
+ */
+export function validateConfig(): ConfigValidationResult {
+  const errors: ConfigError[] = [];
+
+  // ── AI API Key ────────────────────────────────────────────
+  const apiKey = CONFIG.AI.API_KEY;
+  if (!apiKey) {
+    errors.push({ field: 'AI.API_KEY', message: 'AI_API_KEY env var is required. Set it in .env or environment.' });
+  } else if (apiKey.length < 8) {
+    errors.push({ field: 'AI.API_KEY', message: `AI_API_KEY appears too short (${apiKey.length} chars). Expected a valid API key.` });
+  }
+
+  // ── AI Base URL ───────────────────────────────────────────
+  const baseUrl = CONFIG.AI.BASE_URL;
+  if (!baseUrl) {
+    errors.push({ field: 'AI.BASE_URL', message: 'AI_BASE_URL env var is empty and no default is set.' });
+  } else {
+    try {
+      const parsed = new URL(baseUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        errors.push({ field: 'AI.BASE_URL', message: `AI_BASE_URL must use http or https protocol, got "${parsed.protocol}"` });
+      }
+    } catch {
+      errors.push({ field: 'AI.BASE_URL', message: `AI_BASE_URL is not a valid URL: "${baseUrl}"` });
+    }
+  }
+
+  // ── Dashboard Port ────────────────────────────────────────
+  const port = CONFIG.DASHBOARD.PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    errors.push({ field: 'DASHBOARD.PORT', message: `DASHBOARD.PORT must be an integer 1-65535, got ${port}` });
+  }
+
+  // ── Dashboard Host ────────────────────────────────────────
+  const host = CONFIG.DASHBOARD.HOST;
+  if (!host || typeof host !== 'string' || host.trim() === '') {
+    errors.push({ field: 'DASHBOARD.HOST', message: `DASHBOARD.HOST must be a non-empty string, got "${host}"` });
+  }
+
+  // ── Startup Readiness ─────────────────────────────────────
+  const readinessTimeoutMs = CONFIG.STARTUP.READINESS_TIMEOUT_MS;
+  if (!Number.isInteger(readinessTimeoutMs) || readinessTimeoutMs < 0) {
+    errors.push({ field: 'STARTUP.READINESS_TIMEOUT_MS', message: `STARTUP.READINESS_TIMEOUT_MS must be an integer >= 0, got ${readinessTimeoutMs}` });
+  }
+
+  if (!['usable', 'live'].includes(CONFIG.STARTUP.READINESS_MODE)) {
+    errors.push({ field: 'STARTUP.READINESS_MODE', message: `STARTUP.READINESS_MODE must be "usable" or "live", got "${CONFIG.STARTUP.READINESS_MODE}"` });
+  }
+
+  if (!['warn', 'fail'].includes(CONFIG.STARTUP.READINESS_FAILURE_POLICY)) {
+    errors.push({ field: 'STARTUP.READINESS_FAILURE_POLICY', message: `STARTUP.READINESS_FAILURE_POLICY must be "warn" or "fail", got "${CONFIG.STARTUP.READINESS_FAILURE_POLICY}"` });
+  }
+
+  for (const [source, requirement] of Object.entries(CONFIG.STARTUP.READINESS_REQUIREMENTS)) {
+    if (requirement !== '' && !['LIVE', 'DEGRADED', 'SIMULATION'].includes(requirement)) {
+      errors.push({ field: `STARTUP.READINESS_REQUIREMENTS.${source}`, message: `STARTUP_READINESS_${source.toUpperCase()} must be LIVE, DEGRADED, SIMULATION, or empty, got "${requirement}"` });
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
 }

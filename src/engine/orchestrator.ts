@@ -1,5 +1,5 @@
 // ============================================================
-// ORCHESTRATOR v3.0 — Multi-TP + Analytics + Safety + Kelly + Sessions + Regime + Macro
+// ORCHESTRATOR v1.0.0 — Multi-TP + Analytics + Safety + Kelly + Sessions + Regime + Macro
 // ============================================================
 
 import { CONFIG, PairState, MarketData, getPairType, getModeConfig } from '../config';
@@ -10,7 +10,6 @@ import { isNewsWindowSafe } from '../data/calendar';
 import { getMacroContext, getMacroConfluenceForPair } from '../data/macro';
 import { computeTechnicals } from '../analysis/technical';
 import { getFundamentalContext } from '../analysis/fundamental';
-import { analyzeMultiTimeframe } from '../analysis/mtf';
 import { analyzeMarket } from '../ai/analyst';
 import {
   createPairState, executeBuy, executeSell,
@@ -21,6 +20,13 @@ import { isPairInFavorableSession, getSessionInfo, logCurrentSession } from '../
 import { computeKelly } from '../analytics/kelly';
 import { loadStrategy, saveStrategy } from '../trading/strategy_store';
 import { checkAndCorrect } from '../learning/corrector';
+import {
+  loadAllPairStates, saveAllPairStates,
+  loadOrResetCircuit, saveCircuitState,
+  saveRuntimeMeta, loadRuntimeMeta, wasCleanShutdown,
+  pruneOrphanPairStates, pruneStalePairStates,
+} from '../persistence/state_store';
+import { getDailyStates, restoreDailyStates } from '../analytics/performance';
 import { EventEmitter } from 'events';
 
 export const orchestratorEmitter = new EventEmitter();
@@ -30,21 +36,78 @@ export const pairStates: Map<string, PairState> = new Map();
 let isRunning = false;
 let cycleCount = 0;
 let totalAICalls = 0;
+let runtimeStartedAt = Date.now();
 
 export function initializePairs(): void {
+  const prevMeta = loadRuntimeMeta();
+  if (prevMeta && !wasCleanShutdown()) {
+    console.warn('[Orchestrator] ⚠️ Previous session did not shut down cleanly — recovering from persisted state');
+  }
+
+  // Try to restore persisted pair states
+  pruneOrphanPairStates(CONFIG.ACTIVE_PAIRS);
+  pruneStalePairStates(CONFIG.ACTIVE_PAIRS);
+  const persisted = loadAllPairStates(CONFIG.ACTIVE_PAIRS);
+  const restoredCount = persisted.size;
+
   for (const pair of CONFIG.ACTIVE_PAIRS) {
-    const strategy = loadStrategy(pair);
     const pairType = getPairType(pair);
 
-    // Commodity pairs need wider SL due to higher volatility
-    if (pairType === 'commodity') {
-      strategy.slPct = Math.max(strategy.slPct, 1.5);
+    if (persisted.has(pair)) {
+      // Use persisted state (preserves balance, positions, closedTrades, PnL, etc.)
+      const saved = persisted.get(pair)!;
+      if (pairType === 'commodity') {
+        saved.strategy.slPct = Math.max(saved.strategy.slPct, 1.5);
+      }
+      saved.currentPrice = 0; // force fresh market data before equity-dependent behavior
+      saved.isAnalyzing = false; // Reset analyzing flag on restore
+      pairStates.set(pair, saved);
+    } else {
+      // No persisted state — create fresh
+      const strategy = loadStrategy(pair);
+      if (pairType === 'commodity') {
+        strategy.slPct = Math.max(strategy.slPct, 1.5);
+      }
+      const state = createPairState(pair, strategy);
+      pairStates.set(pair, state);
     }
-
-    const state = createPairState(pair, strategy);
-    pairStates.set(pair, state);
   }
+
+  // Restore daily circuit breaker state
+  const circuit = loadOrResetCircuit();
+  if (circuit.halted) {
+    const today = new Date().toISOString().slice(0, 10);
+    const restoredDailyStates = new Map<string, import('../analytics/performance').DailyTradingState>();
+    for (const pair of CONFIG.ACTIVE_PAIRS) {
+      const key = `${pair}-${today}`;
+      restoredDailyStates.set(key, {
+        date: today,
+        startBalance: CONFIG.TRADING.STARTING_BALANCE_USDT,
+        pnlToday: CONFIG.TRADING.STARTING_BALANCE_USDT * circuit.dailyPnlPct / 100,
+        tradesCount: 0,
+        halted: true,
+        haltReason: circuit.haltReason ?? 'Restored from persisted halt',
+        consecutiveLosses: circuit.consecutiveLosses,
+      });
+    }
+    restoreDailyStates(restoredDailyStates);
+    console.log(`[Orchestrator] 🚨 Restored circuit breaker HALT: ${circuit.haltReason}`);
+  }
+
+  // Restore cumulative cycle count and save fresh runtime meta
+  cycleCount = prevMeta?.cycleCount ?? 0;
+  runtimeStartedAt = Date.now();
+  saveRuntimeMeta({
+    startedAt: runtimeStartedAt,
+    lastHeartbeat: runtimeStartedAt,
+    cycleCount,
+    version: '1.0.0',
+  });
+
   console.log(`[Orchestrator] Initialized ${CONFIG.ACTIVE_PAIRS.length} pairs (${CONFIG.MODE} mode)`);
+  if (restoredCount > 0) {
+    console.log(`[Orchestrator] 🔄 Restored ${restoredCount} persisted pair states (cycles: ${cycleCount})`);
+  }
   console.log(`[Orchestrator] 📊 Crypto: ${CONFIG.CRYPTO_PAIRS.length} | Forex: ${CONFIG.FOREX_PAIRS.length} | Commodities: ${CONFIG.COMMODITY_PAIRS.length}`);
   console.log(`[Orchestrator] 🎯 Multi-TP: TP1=1.5×ATR | TP2=3×ATR | TP3=5×ATR → Swing Trailing`);
 }
@@ -83,6 +146,11 @@ export async function startOrchestrator(): Promise<void> {
     orchestratorEmitter.emit('cycle-complete', {
       cycle: cycleCount, states: Array.from(pairStates.values()), totalAICalls,
     });
+
+    // Periodic state persistence every 5 cycles
+    if (cycleCount % 5 === 0) {
+      persistState();
+    }
 
     const waitTime = Math.max(0, modeConf.ANALYSIS_INTERVAL_MS - elapsed);
     await sleep(waitTime);
@@ -272,10 +340,52 @@ async function getMarketData(pair: string): Promise<MarketData | null> {
 
 export function stopOrchestrator(): void { isRunning = false; }
 
+export function persistState(options: { shutdown?: boolean } = {}): void {
+  try {
+    saveAllPairStates(Array.from(pairStates.values()));
+
+    const dailyStates = getDailyStates();
+    const today = new Date().toISOString().slice(0, 10);
+    let totalPnlToday = 0;
+    let maxConsecutiveLosses = 0;
+    let anyHalted = false;
+    let haltReason = '';
+
+    for (const [, ds] of dailyStates) {
+      if (ds.date === today) {
+        totalPnlToday += ds.pnlToday;
+        maxConsecutiveLosses = Math.max(maxConsecutiveLosses, ds.consecutiveLosses);
+        if (ds.halted) {
+          anyHalted = true;
+          haltReason = ds.haltReason;
+        }
+      }
+    }
+
+    saveCircuitState({
+      date: today,
+      dailyPnlPct: (totalPnlToday / (CONFIG.TRADING.STARTING_BALANCE_USDT * CONFIG.ACTIVE_PAIRS.length)) * 100,
+      consecutiveLosses: maxConsecutiveLosses,
+      halted: anyHalted,
+      haltReason: anyHalted ? haltReason : undefined,
+    });
+
+    saveRuntimeMeta({
+      startedAt: runtimeStartedAt,
+      shutdownAt: options.shutdown ? Date.now() : undefined,
+      lastHeartbeat: Date.now(),
+      cycleCount,
+      version: '1.0.0',
+    });
+  } catch (err: any) {
+    console.error(`[Persistence] Save failed: ${err.message}`);
+  }
+}
+
 export function getPortfolioSummary() {
   let totalEquity = 0, totalPnl = 0, totalTrades = 0, totalWins = 0;
   for (const [, state] of pairStates) {
-    totalEquity += getTotalEquity(state, state.currentPrice);
+    totalEquity += state.currentPrice > 0 ? getTotalEquity(state, state.currentPrice) : state.balance;
     totalPnl += state.totalPnl;
     totalTrades += state.closedTrades.length;
     totalWins += state.closedTrades.filter(t => (t.pnl ?? 0) > 0).length;
@@ -296,7 +406,7 @@ function getPortfolioHeat(): number {
   let totalEquity = 0;
 
   for (const [, state] of pairStates) {
-    const equity = getTotalEquity(state, state.currentPrice);
+    const equity = state.currentPrice > 0 ? getTotalEquity(state, state.currentPrice) : state.balance;
     totalEquity += equity;
     for (const pos of state.positions) {
       if (pos.status === 'OPEN') {
@@ -344,4 +454,3 @@ function isBlockedByCorrelation(pair: string): { blocked: boolean; reason: strin
 }
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
-

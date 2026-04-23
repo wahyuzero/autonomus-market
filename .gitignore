@@ -26,3 +26,7 @@ Thumbs.db
 
 # Gemini artifacts
 .gemini/
+
+# Testsprite artifacts
+.testsprite/
+testsprite_tests/

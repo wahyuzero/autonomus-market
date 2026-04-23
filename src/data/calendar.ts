@@ -6,9 +6,7 @@
 // ============================================================
 
 import axios from 'axios';
-import * as https from 'https';
-
-const agent = new https.Agent({ rejectUnauthorized: false });
+import { SourceStatus, SourceHealthTier } from '../config';
 
 export interface EconomicEvent {
   datetime: Date;
@@ -21,6 +19,7 @@ export interface EconomicEvent {
 
 let cachedEvents: EconomicEvent[] = [];
 let lastFetch = 0;
+let lastApiSuccess = false;
 const CACHE_MS = 3600000; // Refresh every hour
 
 // Map pair to currencies affected
@@ -53,7 +52,7 @@ export async function fetchEconomicCalendar(): Promise<EconomicEvent[]> {
 
     const response = await axios.get(
       `https://nfs.faireconomy.media/ff_calendar_thisweek.json`,
-      { httpsAgent: agent, timeout: 8000 }
+      { timeout: 8000 }
     );
 
     if (response.data && Array.isArray(response.data)) {
@@ -69,16 +68,18 @@ export async function fetchEconomicCalendar(): Promise<EconomicEvent[]> {
         }));
 
       lastFetch = now;
+      lastApiSuccess = true;
       console.log(`[Calendar] 📅 Loaded ${cachedEvents.length} economic events`);
       return cachedEvents;
     }
   } catch (err: any) {
-    // Silently fall back to hardcoded known events
+    lastApiSuccess = false;
   }
 
   // Fallback: generate approximate recurring events for this week
   cachedEvents = generateApproximateEvents();
   lastFetch = now;
+  lastApiSuccess = false;
   return cachedEvents;
 }
 
@@ -151,4 +152,32 @@ export async function getUpcomingEvents(hoursAhead = 24): Promise<EconomicEvent[
     .filter(e => e.impact === 'high' && e.datetime.getTime() > now && e.datetime.getTime() < cutoff)
     .sort((a, b) => a.datetime.getTime() - b.datetime.getTime())
     .slice(0, 5);
+}
+
+export function getSourceStatus(): SourceStatus {
+  const hasEvents = cachedEvents.length > 0;
+  const staleMs = Date.now() - lastFetch;
+  const isStale = lastFetch > 0 && staleMs > CACHE_MS * 2;
+
+  const status: SourceHealthTier = lastApiSuccess && !isStale
+    ? 'LIVE'
+    : hasEvents
+      ? 'DEGRADED'
+      : 'SIMULATION';
+
+  return {
+    source: 'calendar',
+    status,
+    message: status === 'LIVE'
+      ? 'ForexFactory API events loaded'
+      : status === 'DEGRADED'
+        ? `Using cached/generated events (${Math.round(staleMs / 60000)}m stale)`
+        : 'No events loaded — using approximate fallback',
+    lastUpdated: Date.now(),
+    metadata: {
+      eventsCount: cachedEvents.length,
+      lastApiSuccess,
+      lastFetch,
+    },
+  };
 }

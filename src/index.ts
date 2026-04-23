@@ -1,23 +1,34 @@
 // ============================================================
-// MAIN ENTRY POINT - Autonomous Market AI System v3.0
+// MAIN ENTRY POINT - Autonomous Market AI System v1.0.0
 // Full professional suite: Multi-TP, Kelly, Regime, Macro, MTF
 // ============================================================
 
 import 'dotenv/config';
 
-import { CONFIG, getModeConfig } from './config';
+import { CONFIG, getModeConfig, validateConfig } from './config';
 import { startPriceWebSocket } from './data/crypto';
 import { startForexRefresh } from './data/forex';
 import { initCommodityFeed } from './data/commodity';
-import { initializePairs, startOrchestrator } from './engine/orchestrator';
+import { initializePairs, startOrchestrator, stopOrchestrator, persistState, getPortfolioSummary } from './engine/orchestrator';
+import { waitForDataReadiness } from './engine/readiness';
 import { startDashboard } from './dashboard/server';
 
 async function main() {
+  // Validate config before booting any subsystems
+  const validation = validateConfig();
+  if (!validation.valid) {
+    console.error('[Config] Startup validation failed:');
+    for (const err of validation.errors) {
+      console.error(`  ✗ ${err.field}: ${err.message}`);
+    }
+    process.exit(1);
+  }
+
   const modeConf = getModeConfig();
 
   console.log(`
 ╔═══════════════════════════════════════════════════════════╗
-║       🤖 AUTONOMOUS MARKET AI SYSTEM v2.0                ║
+║       🤖 AUTONOMOUS MARKET AI SYSTEM v1.0.0              ║
 ║   Crypto • Forex • Gold • Silver • Oil Analysis          ║
 ║          Powered by SemutSSH AI (semut/opus-4.6)         ║
 ╚═══════════════════════════════════════════════════════════╝
@@ -50,22 +61,52 @@ async function main() {
   // 5. Start dashboard
   startDashboard();
 
-  // 6. Warm up
-  console.log('[Main] Waiting 3s for data feeds to establish...');
-  await sleep(3000);
+  // 6. Data readiness gate — probe feeds with bounded timeout
+  const readiness = await waitForDataReadiness({
+    timeoutMs: CONFIG.STARTUP.READINESS_TIMEOUT_MS,
+    mode: CONFIG.STARTUP.READINESS_MODE,
+    requirements: Object.fromEntries(
+      Object.entries(CONFIG.STARTUP.READINESS_REQUIREMENTS).filter(([, value]) => value !== ''),
+    ) as Partial<Record<string, import('./config').SourceHealthTier>>,
+  });
+  if (!readiness.ready) {
+    const message = `[Main] ⚠️ Data sources not ready under ${CONFIG.STARTUP.READINESS_MODE} mode after ${readiness.elapsedMs}ms`;
+    if (CONFIG.STARTUP.READINESS_FAILURE_POLICY === 'fail') {
+      console.error(`${message} — aborting startup`);
+      process.exit(1);
+    }
+    console.warn(`${message} — proceeding with available data`);
+  }
 
   // 7. Start main orchestrator loop (runs forever)
   await startOrchestrator();
 }
 
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+// ── Graceful shutdown ──────────────────────────────────────
+let isShuttingDown = false;
+
+function gracefulShutdown(signal: string): void {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(`\n[Main] Received ${signal}. Shutting down gracefully...`);
+
+  try {
+    stopOrchestrator();
+    persistState({ shutdown: true });
+
+    const summary = getPortfolioSummary();
+    console.log(`[Main] Final state — Equity: $${summary.totalEquity.toFixed(2)} | PnL: $${summary.totalPnl.toFixed(2)} (${summary.totalPnlPct.toFixed(2)}%) | Cycles: ${summary.cycle} | Trades: ${summary.totalTrades}`);
+    console.log('[Main] State persisted. Goodbye.');
+  } catch (err: any) {
+    console.error(`[Main] Error during shutdown: ${err.message}`);
+  }
+
+  process.exit(0);
 }
 
-process.on('SIGINT', () => {
-  console.log('\n[Main] Shutting down gracefully...');
-  process.exit(0);
-});
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 process.on('unhandledRejection', (err) => {
   console.error('[Main] Unhandled error:', err);

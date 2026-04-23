@@ -9,6 +9,24 @@ import { CONFIG } from '../config';
 let requestCount = 0;
 let lastRequestTime = 0;
 
+// ── Authentication health tracking ───────────────────────────
+let _authenticationHealthy = true;
+
+/** Returns true if the last AI request succeeded (or no auth failure has been seen). */
+export function isAuthenticationHealthy(): boolean {
+  return _authenticationHealthy;
+}
+
+/** Reset auth health to healthy — useful after key rotation or admin intervention. */
+export function resetAuthenticationHealth(): void {
+  _authenticationHealthy = true;
+}
+
+/** Check whether an HTTP status code represents an auth failure (401/403). */
+export function isAuthFailureStatus(status: number): boolean {
+  return status === 401 || status === 403;
+}
+
 export const aiClient = new Anthropic({
   apiKey: CONFIG.AI.API_KEY,
   baseURL: CONFIG.AI.BASE_URL,
@@ -47,11 +65,22 @@ export async function askAI(
         .map((b) => (b as any).text)
         .join('');
 
+      _authenticationHealthy = true;
       return text || fallbackResponse();
 
     } catch (err: any) {
       lastError = err;
       const status = err?.status ?? err?.response?.status ?? 0;
+
+      // ── Auth failures: stop retrying immediately ──────────
+      if (isAuthFailureStatus(status)) {
+        _authenticationHealthy = false;
+        console.error(
+          `[AI] Authentication failure ${status} — not retrying. ` +
+          `Check AI_API_KEY / credentials.`
+        );
+        return fallbackAuthResponse(status);
+      }
 
       if (status === 429 || status >= 500) {
         const delay = CONFIG.AI.RETRY_DELAY_MS * attempt;
@@ -86,6 +115,19 @@ function fallbackResponse(): string {
     targetPrice: 0,
     stopLoss: 0,
     fundamental: 'Data unavailable',
+  });
+}
+
+/** Fallback specifically for auth failures — makes the cause visible to callers. */
+function fallbackAuthResponse(status: number): string {
+  return JSON.stringify({
+    signal: 'HOLD',
+    confidence: 0,
+    reasoning: `AI authentication failed (${status}). Holding position — check API credentials.`,
+    entryPrice: 0,
+    targetPrice: 0,
+    stopLoss: 0,
+    fundamental: `Auth error ${status}`,
   });
 }
 

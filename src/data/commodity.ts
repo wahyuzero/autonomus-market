@@ -8,7 +8,7 @@
 // ============================================================
 
 import axios from 'axios';
-import { Candle, MarketData } from '../config';
+import { Candle, MarketData, SourceStatus, SourceHealthTier } from '../config';
 
 // Approximate real prices (March 2026) for seed simulation
 export const COMMODITY_SEEDS: Record<string, {
@@ -24,6 +24,8 @@ export const COMMODITY_SEEDS: Record<string, {
 
 const livePrices: Map<string, number> = new Map();
 const liveChanges: Map<string, number> = new Map();
+let yahooLastSuccess = 0;
+let yahooLastError: string | null = null;
 
 // Initialize with seed prices immediately
 for (const [pair, seed] of Object.entries(COMMODITY_SEEDS)) {
@@ -87,12 +89,13 @@ export async function fetchCommodityCandles(pair: string, interval: string, limi
       const firstClose = candles[0]!.close;
       livePrices.set(pair, lastClose);
       liveChanges.set(pair, ((lastClose - firstClose) / firstClose) * 100);
-      console.log(`[Commodity] ✅ ${pair}: $${lastClose.toFixed(2)} (Yahoo Finance live)`);
+      yahooLastSuccess = Date.now();
+      yahooLastError = null;
     }
 
     return candles.slice(-limit);
   } catch (err: any) {
-    console.warn(`[Commodity] ${pair} Yahoo Finance unavailable: ${err.message?.slice(0, 60)} → simulation`);
+    yahooLastError = err.message?.slice(0, 80);
     return generateSimulatedCommodityCandles(pair, limit, interval);
   }
 }
@@ -206,5 +209,33 @@ export async function buildCommodityMarketData(pair: string): Promise<MarketData
       '4h': candles4h,
     },
     updatedAt: Date.now(),
+  };
+}
+
+export function getSourceStatus(): SourceStatus {
+  const staleMs = Date.now() - yahooLastSuccess;
+  const isStale = yahooLastSuccess > 0 && staleMs > 600000;
+  const hasLive = yahooLastSuccess > 0 && !isStale;
+
+  const status: SourceHealthTier = hasLive
+    ? 'LIVE'
+    : yahooLastSuccess > 0
+      ? 'DEGRADED'
+      : 'SIMULATION';
+
+  return {
+    source: 'commodity',
+    status,
+    message: status === 'LIVE'
+      ? 'Yahoo Finance OHLCV live'
+      : status === 'DEGRADED'
+        ? `Stale Yahoo data (${Math.round(staleMs / 60000)}m ago): ${yahooLastError ?? 'unknown'}`
+        : 'Yahoo Finance unavailable — using simulated prices',
+    lastUpdated: Date.now(),
+    metadata: {
+      yahooLastSuccess,
+      yahooLastError,
+      pairsTracked: Object.keys(COMMODITY_SEEDS).length,
+    },
   };
 }

@@ -3,16 +3,12 @@
 // ============================================================
 
 import axios from 'axios';
-import * as https from 'https';
 import WebSocket from 'ws';
-import { Candle, MarketData } from '../config';
+import { Candle, MarketData, SourceStatus, SourceHealthTier } from '../config';
 import { EventEmitter } from 'events';
 
 const BINANCE_REST = 'https://api.binance.com/api/v3';
 const BINANCE_WS = 'wss://stream.binance.com:9443';
-
-// Allow self-signed certs in restricted network environments
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
 export const priceEmitter = new EventEmitter();
 const livePrices: Map<string, number> = new Map();
@@ -47,7 +43,7 @@ export function startPriceWebSocket(pairs: string[]): void {
 
   let ws: WebSocket;
   try {
-    ws = new WebSocket(url, { rejectUnauthorized: false });
+    ws = new WebSocket(url);
   } catch {
     console.warn('[Binance WS] Cannot connect, using price simulation');
     if (!simulationActive) simulatePriceFeed(cryptoPairs);
@@ -126,13 +122,12 @@ export function isWsConnected(): boolean {
   return wsConnected;
 }
 
-// Fetch OHLCV candles from Binance REST with self-signed cert bypass
+// Fetch OHLCV candles from Binance REST
 export async function fetchCandles(pair: string, interval: string, limit: number = 200): Promise<Candle[]> {
   try {
     const { data } = await axios.get(`${BINANCE_REST}/klines`, {
       params: { symbol: pair, interval, limit },
       timeout: 8000,
-      httpsAgent,
     });
 
     return data.map((k: any[]): Candle => ({
@@ -198,5 +193,29 @@ export async function buildCryptoMarketData(pair: string): Promise<MarketData> {
     volume24h: liveVolumes.get(pair) ?? 0,
     candles: { '1m': candles1m, '5m': candles5m, '15m': candles15m, '1h': candles1h, '4h': candles4h },
     updatedAt: Date.now(),
+  };
+}
+
+export function getSourceStatus(): SourceStatus {
+  const status: SourceHealthTier = wsConnected
+    ? 'LIVE'
+    : simulationActive
+      ? 'SIMULATION'
+      : 'DEGRADED';
+
+  return {
+    source: 'crypto',
+    status,
+    message: wsConnected
+      ? 'Binance WebSocket connected'
+      : simulationActive
+        ? 'Using simulated price feed'
+        : 'Awaiting connection',
+    lastUpdated: Date.now(),
+    metadata: {
+      wsConnected,
+      simulationActive,
+      trackedPairs: livePrices.size,
+    },
   };
 }

@@ -239,6 +239,23 @@ export function isTradingHalted(pair: string): boolean {
 }
 
 // ============================================================
+// PERSISTENCE BRIDGE — read / restore daily circuit-breaker state
+// ============================================================
+
+/** Snapshot the entire daily-states map (safe for JSON serialization). */
+export function getDailyStates(): Map<string, DailyTradingState> {
+  return new Map(dailyStates);
+}
+
+/** Replace the in-memory daily-states map with persisted data. */
+export function restoreDailyStates(data: Map<string, DailyTradingState>): void {
+  dailyStates.clear();
+  for (const [k, v] of data) {
+    dailyStates.set(k, { ...v });
+  }
+}
+
+// ============================================================
 // PORTFOLIO ANALYTICS
 // ============================================================
 export function computePortfolioMetrics(

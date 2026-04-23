@@ -4,22 +4,17 @@
   "description": "AI Autonomous Market Analysis System - Crypto, Forex, Stocks, Commodities",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npx tailwindcss -i src/dashboard/public/css/tailwind.css -o src/dashboard/public/styles.css --minify && tsc && rm -rf dist/dashboard/public && cp -r src/dashboard/public dist/dashboard/public",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
-    "test:ai": "ts-node src/ai/client.ts",
-    "test:data": "ts-node src/data/crypto.ts"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "axios": "^1.7.0",
-    "chalk": "^4.1.2",
     "dotenv": "^17.3.1",
     "express": "^4.21.0",
-    "lowdb": "^3.0.0",
-    "node-cron": "^3.0.3",
-    "node-fetch": "^2.7.0",
-    "ora": "^5.4.1",
     "technicalindicators": "^3.1.0",
     "winston": "^3.14.0",
     "ws": "^8.18.0"
@@ -27,9 +22,10 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
-    "@types/node-fetch": "^2.6.11",
     "@types/ws": "^8.5.13",
+    "tailwindcss": "^3.4.19",
     "ts-node": "^10.9.2",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.1.1"
   }
 }

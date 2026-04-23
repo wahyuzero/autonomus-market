@@ -1,5 +1,5 @@
 // —————————————————————————————————————————————————————————————
-// TECHNICAL ANALYSIS ENGINE v2.5 — Full Professional Suite
+// TECHNICAL ANALYSIS ENGINE v1.0.0 — Full Professional Suite
 //
 // Includes: BOS/CHoCH, VWAP+Bands, Ichimoku (5), RSI Divergence,
 // MACD Momentum, Volume Profile (POC), FVG, Order Blocks,
